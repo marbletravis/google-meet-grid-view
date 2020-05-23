@@ -1,24 +1,4 @@
 ;(async function () {
-  if (document.currentScript && document.currentScript.src === 'https://cdn.jsdelivr.net/gh/Fugiman/google-meet-grid-view/extension.min.js') {
-    // We're running the cached CDN version, load the uncached version (rotates hourly)
-    const s = document.createElement('script')
-    s.src = 'https://cdn.jsdelivr.net/gh/Fugiman/google-meet-grid-view/extension.js?t=' + Math.floor(new Date() / 3600000)
-    document.body.appendChild(s)
-    return
-  }
-
-  // if we're running v1.19 of popup.html, patch the HTML to match what we expect
-  if (typeof TranslationFactory === 'undefined') {
-    // Include grid.user.js to get access to TranslationFactory
-    await new Promise(resolve => {
-      const gridScript = document.createElement('script')
-      gridScript.setAttribute('charset', 'utf-8')
-      gridScript.onload = resolve
-      gridScript.src = 'https://cdn.jsdelivr.net/gh/Fugiman/google-meet-grid-view/grid.user.js?t=' + Math.floor(new Date() / 3600000)
-      document.body.appendChild(gridScript)
-    })
-  }
-
   const T = TranslationFactory()
 
   // Construct HTML
@@ -28,40 +8,49 @@
     <div id="no-meeting">${T('noMeeting')}</div>
     <label id="enabled">
       <input type="checkbox" />
-      <span>${T('enabled')}</span>
+      ${T('enabled')}
     </label>
 
     <div class="spacer"></div>
 
     <label id="show-only-video">
       <input type="checkbox" />
-      <span>${T('showOnlyVideo')}</span>
+      ${T('showOnlyVideo')}
     </label>
     <label id="highlight-speaker">
       <input type="checkbox" />
-      <span>${T('highlightSpeaker')}</span>
+      ${T('highlightSpeaker')}
     </label>
     <label id="include-own-video">
       <input type="checkbox" />
-      <span>${T('includeOwnVideo')}</span>
+      ${T('includeOwnVideo')}
     </label>
     <label id="auto-enable">
       <input type="checkbox" />
-      <span>${T('autoEnable')}</span>
+      ${T('autoEnable')}
     </label>
 
     <div class="spacer"></div>
 
     <label id="screen-capture-mode">
       <input type="checkbox" />
-      <span>${T('screenCaptureMode')}</span>
-      <small>${T('screenCaptureModeDescription')}</small>
+      ${T('screenCaptureMode')}
     </label>
+    <small id="screen-capture-mode-desc">${T('screenCaptureModeDescription')}</small>
 
     <div class="spacer"></div>
 
-    <a id="source-code" href="https://github.com/Fugiman/google-meet-grid-view" target="_blank">
-      ${T('sourceCode')}
+    <div id="advanced-settings">
+      <a href="#">${T('advancedSettingsLink')}</a>
+    </div>
+
+    <div class="spacer"></div>
+
+    <div id="source-code">
+      <small>v${browser.runtime.getManifest().version}</small>
+      <a href="https://github.com/Fugiman/google-meet-grid-view" target="_blank">
+        ${T('sourceCode')}
+      </a>
     </div>
   `
 
@@ -76,47 +65,43 @@
   }
 
   document.body.classList = 'in-meeting'
-  document.querySelector('#enabled input').checked = state.enabled
-  document.querySelector('#show-only-video input').checked = state.showOnlyVideo
-  document.querySelector('#highlight-speaker input').checked = state.highlightSpeaker
-  document.querySelector('#include-own-video input').checked = state.includeOwnVideo
-  document.querySelector('#auto-enable input').checked = state.autoEnable
-  document.querySelector('#screen-capture-mode input').checked = state.screenCaptureMode
-
-  const updateScreenCaptureMode = enabled => {
-    document.querySelector('#show-only-video input').checked = !enabled && state.showOnlyVideo
-    document.querySelector('#show-only-video input').disabled = enabled
-    document.querySelector('#show-only-video').classList.toggle('disabled', enabled)
-
-    document.querySelector('#highlight-speaker input').checked = !enabled && state.highlightSpeaker
-    document.querySelector('#highlight-speaker input').disabled = enabled
-    document.querySelector('#highlight-speaker').classList.toggle('disabled', enabled)
-  }
-  const setDisabled = v => {
-    document.querySelectorAll('label:not(#enabled)').forEach(el => el.classList.toggle('disabled', v))
-    document.querySelectorAll('label:not(#enabled) input').forEach(el => (el.disabled = v))
-    if (!v) updateScreenCaptureMode(document.querySelector('#screen-capture-mode input').checked)
+  for (let [k, v] of Object.entries(state.settings)) {
+    const i = document.querySelector(`#${k} input`)
+    if (i) i.checked = v
   }
 
-  setDisabled(!state.enabled)
+  const updateSettings = () => {
+    document.querySelectorAll('label:not(#enabled)').forEach(el => el.classList.toggle('disabled', !state.settings['enabled']))
+    document.querySelectorAll('label:not(#enabled) input').forEach(el => (el.disabled = !state.settings['enabled']))
+
+    if (state.settings['enabled']) {
+      document.querySelector('#show-only-video input').checked = state.settings['show-only-video'] && !state.settings['screen-capture-mode']
+      document.querySelector('#show-only-video input').disabled = state.settings['screen-capture-mode']
+      document.querySelector('#show-only-video').classList.toggle('disabled', state.settings['screen-capture-mode'])
+
+      document.querySelector('#highlight-speaker input').checked = state.settings['highlight-speaker'] && !state.settings['screen-capture-mode']
+      document.querySelector('#highlight-speaker input').disabled = state.settings['screen-capture-mode']
+      document.querySelector('#highlight-speaker').classList.toggle('disabled', state.settings['screen-capture-mode'])
+    }
+  }
+
+  updateSettings()
 
   document.querySelectorAll('label').forEach(el => {
-    const titleCaseID = el.id
-      .split('-')
-      .map(s => s.charAt(0).toUpperCase() + s.slice(1))
-      .join('')
-    const name = titleCaseID.charAt(0).toLowerCase() + titleCaseID.slice(1)
-    const type = 'set' + titleCaseID
+    const name = el.id
     el.querySelector('input').onchange = async e => {
       try {
-        const response = await browser.tabs.sendMessage(tabs[0].id, { type, value: e.target.checked })
+        const response = await browser.tabs.sendMessage(tabs[0].id, { type: 'updateSetting', name, value: e.target.checked })
         if (response.error) throw new Error(response.error)
-        state[name] = e.target.checked
-        if (name === 'enabled') setDisabled(!e.target.checked)
-        if (name === 'screenCaptureMode') updateScreenCaptureMode(e.target.checked)
+        state.settings[name] = e.target.checked
+        updateSettings()
       } catch {
         e.target.checked = !e.target.checked
       }
     }
   })
+  document.querySelector('#advanced-settings a').onclick = e => {
+    e.preventDefault()
+    browser.tabs.sendMessage(tabs[0].id, { type: 'updateSetting', name: 'show-settings-overlay', value: true })
+  }
 })()
